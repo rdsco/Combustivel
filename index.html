@@ -6,7 +6,7 @@
 <title>RDSCO Veículos</title>
 <script>
   // Force cache-busting to bypass old PWA caches and load Midnight Black instantly
-  const CURRENT_VERSION = 'v22';
+  const CURRENT_VERSION = 'v23';
   if (localStorage.getItem('app_version') !== CURRENT_VERSION) {
     localStorage.setItem('app_version', CURRENT_VERSION);
     if ('caches' in window) {
@@ -182,7 +182,8 @@
   .sheet-btn{ background:none; border:none; font-size:17px; color:var(--blue); padding:6px; font-family:inherit; }
   .sheet-btn.save{font-weight:600;}
   .sheet-btn.delete{color:var(--red);}
-  .sheet-body{ flex: 1; min-height: 0; overflow-y:auto; padding:0 16px 24px; -webkit-overflow-scrolling: touch; }
+  .sheet-body{ flex: 1; min-height: 0; overflow-y:auto; padding:0 16px 24px; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; touch-action: pan-y; }
+  body.sheet-open{ overflow:hidden; position:fixed; width:100%; }
 
   .field-group{ background:var(--card); border-radius:14px; margin-bottom:20px; overflow:hidden; }
   .field{ display:flex; align-items:center; justify-content:space-between; padding:11px 14px; border-bottom:0.5px solid var(--line); gap:10px; }
@@ -1193,6 +1194,11 @@
       <div class="field">
         <label>Motivo</label>
         <select id="fMotivoId"></select>
+      </div>
+      <div class="field">
+        <label>Tag</label>
+        <input type="text" id="fTag" placeholder="Ex: Viagem, ClienteX" maxlength="24" style="text-align:right;" list="fTagList">
+        <datalist id="fTagList"></datalist>
       </div>
     </div>
 
@@ -2995,6 +3001,8 @@ function renderInicio(){
   } else {
     let tlHtml = '';
     timelineAbast.forEach(r => {
+      const consumo = computeConsumption(r);
+      const kmLStr = consumo ? consumo.toFixed(1) + ' km/l' : '';
       tlHtml += `
         <div class="entry" onclick="openSheetAbastecimento('${r.id}')">
           <div class="fuel-dot" style="background:${fuelColorFor(r.combustivelId)}; color:var(--blue); display:flex; align-items:center; justify-content:center;">
@@ -3002,7 +3010,7 @@ function renderInicio(){
           </div>
           <div class="entry-main">
             <div class="entry-title" style="color:var(--ink); font-weight:600; font-size:14.5px;">${escapeHtml(r.posto || 'Abastecimento')}</div>
-            <div class="entry-sub" style="color:var(--ink-soft); font-size:12px;">${dateFmt(r.data)} · ${r.litros.toFixed(3)} L</div>
+            <div class="entry-sub" style="color:var(--ink-soft); font-size:12px;">${dateFmt(r.data)} · ${r.litros.toFixed(3)} L${kmLStr ? ' · <span style="color:var(--orange); font-weight:600;">' + kmLStr + '</span>' : ''}</div>
           </div>
           <div class="entry-right">
             <div class="val" style="font-weight:700; font-size:15px; color:var(--ink);">${currency.format(r.valor)}</div>
@@ -3201,6 +3209,11 @@ function openSheetAbastecimento(id){
     const match = fuelTypes.find(f=>f.nome === entry.combustivel);
     if(match) fuelSelId = match.id;
   }
+  if(!entry && !fuelSelId){
+    const gasCom = fuelTypes.find(f=> f.ativo && (f.nome.toLowerCase().includes('gas. com') || f.nome.toLowerCase().includes('gasolina com')));
+    if(gasCom) fuelSelId = gasCom.id;
+    else if(fuelTypes.length > 0) fuelSelId = fuelTypes[0].id;
+  }
   populateFuelSelect(document.getElementById('fCombustivelId'), fuelSelId);
 
   let postSelId = entry ? entry.postoId : '';
@@ -3233,6 +3246,8 @@ function openSheetAbastecimento(id){
 
   populateMotiveSelect(document.getElementById('fMotivoId'), entry ? (entry.motivoId || entry.tipoConsumo || 'Normal') : 'Normal');
   document.getElementById('fTipoCombustivel').value = entry ? (entry.tipoCombustivel || '') : '';
+  document.getElementById('fTag').value = entry ? (entry.tag || '') : '';
+  refreshFTagDatalist();
 
   currentPhoto = entry && entry.foto ? entry.foto : null;
   updatePhotoPreview();
@@ -3344,6 +3359,7 @@ document.getElementById('btnSaveAbastecimento').addEventListener('click', async 
   const motivoId = document.getElementById('fMotivoId').value;
   const tipoConsumo = getMotiveName(motivoId);
   const tipoCombustivel = document.getElementById('fTipoCombustivel').value;
+  const tag = document.getElementById('fTag').value.trim().split(/\s+/)[0] || '';
 
   if(!veiculoId){ alert('Selecione o veículo.'); return; }
   if(!combustivelId){ alert('Selecione o combustível.'); return; }
@@ -3354,13 +3370,14 @@ document.getElementById('btnSaveAbastecimento').addEventListener('click', async 
 
   if(editingId){
     const idx = entries.findIndex(e=>e.id === editingId);
-    entries[idx] = { ...entries[idx], veiculoId, condutorId, combustivelId, pagamentoId, postoId, posto, cidade, estado, data, odometro, litros, valor, tanqueCheio, tipoConsumo, motivoId, foto: currentPhoto, tipoCombustivel };
+    entries[idx] = { ...entries[idx], veiculoId, condutorId, combustivelId, pagamentoId, postoId, posto, cidade, estado, data, odometro, litros, valor, tanqueCheio, tipoConsumo, motivoId, foto: currentPhoto, tipoCombustivel, tag };
   }else{
     entries.push({
-      id: uid('e'), veiculoId, condutorId, combustivelId, pagamentoId, postoId, posto, cidade, estado, data, odometro, litros, valor, tanqueCheio, tipoConsumo, motivoId, tipoCombustivel,
+      id: uid('e'), veiculoId, condutorId, combustivelId, pagamentoId, postoId, posto, cidade, estado, data, odometro, litros, valor, tanqueCheio, tipoConsumo, motivoId, tipoCombustivel, tag,
       foto: currentPhoto, criadoEm: Date.now()
     });
   }
+  if(tag) addTagSuggestion(tag);
   await saveEntries();
   renderAll();
   closeSheet();
@@ -5684,8 +5701,14 @@ document.getElementById('btnWipeAll').addEventListener('click', async ()=>{
 ============================================================ */
 const overlay = document.getElementById('overlay');
 let sheetStack = [];
+let _bodyScrollY = 0;
 function openSheet(sheetId){
   if(sheetStack.includes(sheetId)) return;
+  if(sheetStack.length === 0){
+    _bodyScrollY = window.scrollY;
+    document.body.classList.add('sheet-open');
+    document.body.style.top = `-${_bodyScrollY}px`;
+  }
   sheetStack.push(sheetId);
   const el = document.getElementById(sheetId);
   el.classList.add('show');
@@ -5705,6 +5728,9 @@ function closeSheet(){
     overlay.classList.remove('show');
     overlay.style.zIndex = '';
     editingId = null;
+    document.body.classList.remove('sheet-open');
+    document.body.style.top = '';
+    window.scrollTo(0, _bodyScrollY);
   }
 }
 overlay.addEventListener('click', closeSheet);
@@ -5950,11 +5976,12 @@ function addTagSuggestion(tag){
 
 function refreshTagDatalist(){
   const opts = tagSuggestions.map(t => `<option value="${escapeHtml(t)}">`).join('');
-  ['deTagList','reTagList','pTagList','seTagList'].forEach(id=>{
+  ['deTagList','reTagList','pTagList','seTagList','fTagList'].forEach(id=>{
     const el = document.getElementById(id);
     if(el) el.innerHTML = opts;
   });
 }
+const refreshFTagDatalist = refreshTagDatalist;
 
 /* ============================================================
    SERVIÇO — CRUD e renderização
@@ -7325,9 +7352,8 @@ function renderRelatorio() {
     if (!dateInicioInput.value) {
       dateInicioInput.value = savedPrefs.dataInicio || new Date(today.getFullYear(), 0, 1).toISOString().slice(0, 10);
     }
-    if (!dateFimInput.value) {
-      dateFimInput.value = savedPrefs.dataFim || today.toISOString().slice(0, 10);
-    }
+    // Data Fim sempre carrega com a data de hoje
+    dateFimInput.value = today.toISOString().slice(0, 10);
   }
 
 
@@ -7381,6 +7407,7 @@ function renderRelatorio() {
     filterByRelParams(entries, 'data').forEach(e => {
       const fuelObj = fuelTypes.find(f => f.id === e.combustivelId);
       const fuelName = fuelObj ? fuelObj.nome : (e.combustivel || 'Combustível');
+      const consumo = computeConsumption(e);
       itemsToAggregate.push({
         id: e.id,
         tipo: 'Combustível',
@@ -7388,7 +7415,8 @@ function renderRelatorio() {
         data: e.data,
         valor: e.valor || 0,
         fluxo: 'saida',
-        detalhes: `${e.litros ? e.litros.toFixed(2) + 'L' : ''} ${e.odometro ? '· ' + e.odometro + ' km' : ''}`
+        detalhes: `${e.litros ? e.litros.toFixed(2) + 'L' : ''} ${e.odometro ? '· ' + e.odometro.toLocaleString('pt-BR') + ' km' : ''}`.trim(),
+        kmL: consumo
       });
     });
   }
@@ -7509,13 +7537,14 @@ function renderRelatorio() {
     const formattedDate = parts.length === 3 ? `${parts[2]}/${parts[1]}/${parts[0].slice(2)}` : r.data;
     const color = r.fluxo === 'entrada' ? 'var(--green)' : (r.fluxo === 'saida' ? 'var(--red)' : 'var(--blue)');
     const prefix = r.fluxo === 'entrada' ? '+' : (r.fluxo === 'saida' ? '-' : '');
+    const kmLBadge = r.kmL ? `<span style="font-size:11px; font-weight:700; color:var(--orange); background:rgba(255,149,0,0.1); border-radius:10px; padding:1px 6px; margin-left:4px;">${r.kmL.toFixed(1)} km/l</span>` : '';
     
     rowsHtml += `
       <div class="rel-row" data-id="${r.id}" data-tipo="${r.tipo}" style="display: flex; align-items: center; justify-content: space-between; padding: 10px 0; border-bottom: 0.5px solid var(--line); font-size: 13.5px; cursor: pointer; -webkit-user-select:none; user-select:none;">
         <div style="display: flex; align-items: center; gap: 12px; flex: 1; min-width: 0;">
           <span style="color: var(--ink-soft); font-weight: 500; font-variant-numeric: tabular-nums; flex-shrink: 0; width: 72px;">${formattedDate}</span>
           <div style="display: flex; flex-direction: column; min-width: 0; flex: 1;">
-            <span style="color: var(--ink); font-weight: 600; text-overflow: ellipsis; overflow: hidden; white-space: nowrap;">${escapeHtml(r.categoria)}</span>
+            <span style="color: var(--ink); font-weight: 600; text-overflow: ellipsis; overflow: hidden; white-space: nowrap;">${escapeHtml(r.categoria)}${kmLBadge}</span>
             ${r.detalhes ? `<span style="color: var(--ink-soft); font-size: 11px; text-overflow: ellipsis; overflow: hidden; white-space: nowrap; margin-top: 1px;">${escapeHtml(r.detalhes)}</span>` : ''}
           </div>
         </div>
