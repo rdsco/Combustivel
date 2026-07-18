@@ -6,7 +6,7 @@
 <title>RDSCO Veículos</title>
 <script>
   // Force cache-busting to bypass old PWA caches and load Midnight Black instantly
-  const CURRENT_VERSION = 'v25';
+  const CURRENT_VERSION = 'v26';
   if (localStorage.getItem('app_version') !== CURRENT_VERSION) {
     localStorage.setItem('app_version', CURRENT_VERSION);
     if ('caches' in window) {
@@ -1457,6 +1457,10 @@
         <label>Ativo</label>
         <label class="switch"><input type="checkbox" id="fuAtivo" checked><span class="slider"></span></label>
       </div>
+      <div class="field">
+        <label>Padrão</label>
+        <label class="switch"><input type="checkbox" id="fuPadrao"><span class="slider"></span></label>
+      </div>
     </div>
     <button class="sheet-btn delete" id="btnDeleteCombustivel" style="display:none; width:100%; text-align:center; padding:12px; background:var(--card); border-radius:14px;">Excluir combustível</button>
   </div>
@@ -2301,7 +2305,7 @@ async function loadAll(){
 
   if(fuelTypes.length === 0){
     fuelTypes = [
-      { id: uid('fu'), nome: 'Gas. Comum', ativo: true, criadoEm: Date.now() },
+      { id: uid('fu'), nome: 'Gas. Comum', ativo: true, padrao: true, criadoEm: Date.now() },
       { id: uid('fu'), nome: 'Gas. Aditivada', ativo: true, criadoEm: Date.now()+1 },
       { id: uid('fu'), nome: 'Gas. Premium', ativo: true, criadoEm: Date.now()+2 },
       { id: uid('fu'), nome: 'Etanol', ativo: true, criadoEm: Date.now()+3 }
@@ -2619,7 +2623,7 @@ function updateHeader(){
 
   const fabAddEl = document.getElementById('fabAdd');
   if(fabAddEl) {
-    fabAddEl.style.display = (currentTab === 'configuracoes' || currentTab === 'relatorios') ? 'none' : 'block';
+    fabAddEl.style.display = (currentTab === 'historico') ? 'block' : 'none';
   }
 
   const filterContainer = document.getElementById('headerVehicleFilterContainer');
@@ -3215,9 +3219,14 @@ function openSheetAbastecimento(id){
     if(match) fuelSelId = match.id;
   }
   if(!entry && !fuelSelId){
-    const gasCom = fuelTypes.find(f=> f.ativo && (f.nome.toLowerCase().includes('gas. com') || f.nome.toLowerCase().includes('gasolina com')));
-    if(gasCom) fuelSelId = gasCom.id;
-    else if(fuelTypes.length > 0) fuelSelId = fuelTypes[0].id;
+    const padraoFuel = fuelTypes.find(f => f.ativo && f.padrao);
+    if(padraoFuel){
+      fuelSelId = padraoFuel.id;
+    } else {
+      const gasCom = fuelTypes.find(f=> f.ativo && (f.nome.toLowerCase().includes('gas. com') || f.nome.toLowerCase().includes('gasolina com')));
+      if(gasCom) fuelSelId = gasCom.id;
+      else if(fuelTypes.length > 0) fuelSelId = fuelTypes[0].id;
+    }
   }
   populateFuelSelect(document.getElementById('fCombustivelId'), fuelSelId);
 
@@ -3677,11 +3686,12 @@ function renderCombustiveis(){
   let html = '<div class="group">';
   fuelTypes.forEach((f, idx)=>{
     const usageCount = entries.filter(e=>e.combustivelId === f.id).length;
+    const isPadraoLabel = f.padrao ? ' <span style="font-size:11px; font-weight:700; color:var(--blue); background:rgba(0,122,255,0.1); border-radius:10px; padding:1px 6px; margin-left:4px;">Padrão</span>' : '';
     html += `
       <div class="entry" data-id="${f.id}">
         <div class="order-badge" style="background:${fuelPalette[idx % fuelPalette.length]}">${idx+1}</div>
         <div class="entry-main">
-          <div class="entry-title">${escapeHtml(f.nome)}</div>
+          <div class="entry-title">${escapeHtml(f.nome)}${isPadraoLabel}</div>
           <div class="entry-sub">${usageCount>0 ? usageCount+' abastecimento'+(usageCount>1?'s':'')+' registrado'+(usageCount>1?'s':'') : 'Ainda não utilizado'}</div>
         </div>
         <div class="entry-right" style="display:flex; align-items:center; gap:6px;">
@@ -3706,6 +3716,7 @@ function openSheetCombustivel(id){
 
   document.getElementById('fuNome').value = f ? f.nome : '';
   document.getElementById('fuAtivo').checked = f ? f.ativo : true;
+  document.getElementById('fuPadrao').checked = f ? !!f.padrao : false;
 
   openSheet('sheetCombustivel');
 }
@@ -3713,14 +3724,21 @@ function openSheetCombustivel(id){
 document.getElementById('btnSaveCombustivel').addEventListener('click', async ()=>{
   const nome = document.getElementById('fuNome').value.trim();
   const ativo = document.getElementById('fuAtivo').checked;
+  const padrao = document.getElementById('fuPadrao').checked;
 
   if(!nome){ alert('Informe o nome do combustível.'); return; }
 
+  if(padrao){
+    fuelTypes.forEach(f => {
+      f.padrao = false;
+    });
+  }
+
   if(editingId){
     const idx = fuelTypes.findIndex(f=>f.id===editingId);
-    fuelTypes[idx] = { ...fuelTypes[idx], nome, ativo };
+    fuelTypes[idx] = { ...fuelTypes[idx], nome, ativo, padrao };
   }else{
-    fuelTypes.push({ id: uid('fu'), nome, ativo, criadoEm: Date.now() });
+    fuelTypes.push({ id: uid('fu'), nome, ativo, padrao, criadoEm: Date.now() });
   }
   await saveFuelTypes();
   renderAll();
@@ -5652,7 +5670,7 @@ document.getElementById('btnWipeAll').addEventListener('click', async ()=>{
   myLocations = [];
 
   fuelTypes = [
-    { id: uid('fu'), nome: 'Gas. Comum', ativo: true, criadoEm: Date.now() },
+    { id: uid('fu'), nome: 'Gas. Comum', ativo: true, padrao: true, criadoEm: Date.now() },
     { id: uid('fu'), nome: 'Gas. Aditivada', ativo: true, criadoEm: Date.now()+1 },
     { id: uid('fu'), nome: 'Gas. Premium', ativo: true, criadoEm: Date.now()+2 },
     { id: uid('fu'), nome: 'Etanol', ativo: true, criadoEm: Date.now()+3 }
