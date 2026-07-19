@@ -584,7 +584,7 @@
       </div>
     </div>
     <h3 style="font-size:22px; font-weight:700; color:var(--ink); margin:0;">RDSCO Veículos</h3>
-    <div style="font-size:13px; font-weight:600; background:var(--line); padding:6px 14px; border-radius:20px; color:var(--ink-soft);">Versão: 5.26</div>
+    <div style="font-size:13px; font-weight:600; background:var(--line); padding:6px 14px; border-radius:20px; color:var(--ink-soft); margin-top:12px;">Versão: 5.27 - Ajustes (Máscara monetária, UI e Percurso)</div>
     
     <div style="text-align:left; width:100%; max-width:280px; margin-top:10px; font-size:13px; color:var(--ink-soft); line-height:1.6; border-top:1px solid var(--line); padding-top:14px;">
       <strong style="color:var(--ink); display:block; margin-bottom:6px;">Novidades desta versão:</strong>
@@ -1661,7 +1661,7 @@
       </div>
       <div class="field">
         <label>Hora de Início</label>
-        <input type="time" id="pHoraInicio">
+        <input type="time" id="pHoraInicio" style="text-align:right;">
       </div>
       <div class="field">
         <label>Odômetro Inicial (km)</label>
@@ -1693,7 +1693,7 @@
       </div>
       <div class="field">
         <label>Hora de Fim</label>
-        <input type="time" id="pHoraFim">
+        <input type="time" id="pHoraFim" style="text-align:right;">
       </div>
       <div class="field">
         <label>Odômetro Final (km)</label>
@@ -3108,14 +3108,14 @@ function renderAbastecimentos(){
       const pricePerLiter = e.litros > 0 ? e.valor/e.litros : 0;
       const consumo = computeConsumption(e);
       
-      const sub1 = [dateFmt(e.data), entryFuelLabel(e)];
+      const sub1 = [dateFmt(e.data)];
+      if(consumo) sub1.push(consumo.toFixed(1)+' km/l');
       if(entryVehicleLabel(e)) sub1.push(entryVehicleLabel(e));
       
       const sub2 = [];
       if(e.odometro) sub2.push(e.odometro.toLocaleString('pt-BR')+' km');
       const locationPart = e.cidade ? e.cidade + (e.estado ? '-' + e.estado : '') : '';
       if(locationPart) sub2.push(locationPart);
-      if(consumo) sub2.push(consumo.toFixed(1)+' km/l');
 
       html += `
         <div class="entry" data-id="${e.id}">
@@ -3307,6 +3307,24 @@ function recomputeFuelFields(){
     setFuelFieldValue('fLitros', valor/preco, 3);
   }
 }
+function applyDecimalMask(id, decimals) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.addEventListener('input', function(e) {
+    let val = this.value.replace(/\D/g, '');
+    if(!val) {
+      this.value = '';
+      return;
+    }
+    let num = parseInt(val, 10);
+    let floatVal = num / Math.pow(10, decimals);
+    let parts = floatVal.toFixed(decimals).split('.');
+    this.value = parts.join(','); 
+  });
+}
+['fValor','deValor','seValor','reValor','krValor'].forEach(id => applyDecimalMask(id, 2));
+['fLitros','fPreco'].forEach(id => applyDecimalMask(id, 3));
+
 ['fLitros','fPreco','fValor'].forEach(id=>{
   document.getElementById(id).addEventListener('input', ()=> markFieldEdited(id));
 });
@@ -4602,7 +4620,7 @@ document.getElementById('btnSavePercurso').addEventListener('click', async ()=>{
   if(!destino){ alert('Informe o destino.'); return; }
   if(!dataFim){ alert('Informe a data de fim.'); return; }
   if(odometroFim <= odometroInicio){ alert('O odômetro final deve ser maior que o inicial.'); return; }
-  if(valorKm <= 0){ alert('Informe o valor por km.'); return; }
+  if(valorKm < 0){ alert('O valor por km não pode ser negativo.'); return; }
 
   const valorTotal = (odometroFim - odometroInicio) * valorKm;
 
@@ -8030,6 +8048,7 @@ function handleLogout(){
     checkAuth();
   }
 }
+
 
 
 loadAll();
