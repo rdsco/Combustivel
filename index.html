@@ -3284,16 +3284,26 @@ function openSheetAbastecimento(id){
 }
 
 /* ---------- Cálculo automático: Litros / Preço por litro / Valor total ---------- */
-let calcEditOrder = ['fLitros','fValor']; // os 2 últimos campos editados são considerados os "dados"; o 3º é calculado
 function markFieldEdited(fieldId){
-  calcEditOrder = calcEditOrder.filter(f=>f!==fieldId);
-  calcEditOrder.push(fieldId);
-  if(calcEditOrder.length>2) calcEditOrder.shift();
-  recomputeFuelFields();
+  recomputeFuelFields(fieldId);
 }
-function recomputeFuelFields(){
+function recomputeFuelFields(lastEditedId){
   const keys = ['fLitros','fPreco','fValor'];
-  const target = keys.find(k=>!calcEditOrder.includes(k));
+  const emptyKeys = keys.filter(k => document.getElementById(k).value.trim() === '');
+  
+  let target;
+  if (emptyKeys.length === 1) {
+    target = emptyKeys[0];
+  } else if (emptyKeys.length === 0) {
+    if (lastEditedId === 'fValor') {
+      target = 'fPreco';
+    } else if (lastEditedId === 'fPreco') {
+      target = 'fValor';
+    } else if (lastEditedId === 'fLitros') {
+      target = 'fValor';
+    }
+  }
+  
   if(!target) return;
   const litros = getFuelFieldValue('fLitros');
   const preco = getFuelFieldValue('fPreco');
