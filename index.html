@@ -336,7 +336,13 @@
 <header>
   <div class="header-inner">
     <div>
-      <h1 id="pageTitle">Abastecimentos</h1>
+      <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+        <h1 id="pageTitle">Abastecimentos</h1>
+        <select id="relatorioVisaoSelect" onchange="saveRelatorioFiltros(); renderRelatorio();" style="display:none; border:0.5px solid var(--line); padding:4px 10px; border-radius:10px; font-size:13.5px; font-weight:700; background:var(--card); color:var(--ink); font-family:inherit; outline:none; cursor:pointer;">
+          <option value="consolidada">Visão Gerencial Consolidada</option>
+          <option value="detalhada">Visão Gerencial Detalhada</option>
+        </select>
+      </div>
       <div class="header-sub" id="headerSub">carregando…</div>
     </div>
     <div id="headerVehicleFilterContainer" style="display:none; width:100%; margin-top:8px;">
@@ -2685,8 +2691,12 @@ function updateHeader(){
     if(headerSubEl) headerSubEl.textContent = `${c} registro${c!==1?'s':''} encontrado${c!==1?'s':''}`;
   }else if(currentTab === 'relatorios'){
     if(pageTitleEl) pageTitleEl.textContent = 'Relatórios';
-    if(headerSubEl) headerSubEl.textContent = 'Visão gerencial consolidada';
+    if(headerSubEl) headerSubEl.textContent = '';
+    const visaoSel = document.getElementById('relatorioVisaoSelect');
+    if(visaoSel) visaoSel.style.display = 'inline-block';
   }else{
+    const visaoSel = document.getElementById('relatorioVisaoSelect');
+    if(visaoSel) visaoSel.style.display = 'none';
     if(pageTitleEl) pageTitleEl.textContent = 'Configurações';
     if(headerSubEl) headerSubEl.textContent = 'Armazenamento, backup e cadastros';
   }
@@ -7350,13 +7360,60 @@ function saveRelatorioFiltros() {
   const opEl = document.getElementById('relOperacaoSelect');
   const dIEl = document.getElementById('relDataInicio');
   const dFEl = document.getElementById('relDataFim');
+  const visaoEl = document.getElementById('relatorioVisaoSelect');
   const prefs = {
     operacao: opEl ? opEl.value : 'all',
     tag: currentRelatorioTag,
     dataInicio: dIEl ? dIEl.value : '',
-    dataFim: dFEl ? dFEl.value : ''
+    dataFim: dFEl ? dFEl.value : '',
+    visao: visaoEl ? visaoEl.value : 'consolidada'
   };
   saveKey(REL_PREFS_KEY, JSON.stringify(prefs));
+}
+
+function exportRelatorioExcel() {
+  if (typeof XLSX === 'undefined') {
+    alert('A biblioteca de Excel ainda não carregou. Verifique sua conexão com a internet e tente novamente.');
+    return;
+  }
+  
+  const items = window.currentReportItems || [];
+  if (items.length === 0) {
+    alert('Não há dados no relatório para exportar.');
+    return;
+  }
+  
+  const visaoSel = document.getElementById('relatorioVisaoSelect');
+  const visao = visaoSel ? visaoSel.value : 'consolidada';
+  const isDetalhada = visao === 'detalhada';
+  
+  const rows = items.map(item => {
+    const parts = item.data ? item.data.split('-') : [];
+    const dateFmtStr = parts.length === 3 ? `${parts[2]}/${parts[1]}/${parts[0]}` : (item.data || '');
+    
+    const baseObj = {
+      'Data': dateFmtStr,
+      'Operação': item.tipo,
+      'Descrição / Categoria': item.categoria,
+      'Detalhes': item.detalhes || ''
+    };
+    
+    if (isDetalhada) {
+      baseObj['Forma de Pagamento'] = item.formaPagamento || '';
+      baseObj['Observações'] = item.observacao || '';
+    }
+    
+    baseObj['Valor (R$)'] = item.fluxo === 'saida' ? -item.valor : item.valor;
+    return baseObj;
+  });
+
+  const wb = XLSX.utils.book_new();
+  const ws = XLSX.utils.json_to_sheet(rows);
+  XLSX.utils.book_append_sheet(wb, ws, isDetalhada ? 'Relatorio Detalhado' : 'Relatorio Consolidado');
+  
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const filename = `relatorio-${visao}-${todayStr}.xls`;
+  XLSX.writeFile(wb, filename);
 }
 
 function setRelatorioTag(val) {
@@ -7468,12 +7525,20 @@ function renderRelatorio() {
 
   const selectedOp = opSelect ? opSelect.value : 'all';
 
+  // Restaurar seleção de Visão (Consolidada/Detalhada)
+  const visaoSelect2 = document.getElementById('relatorioVisaoSelect');
+  if (visaoSelect2 && savedPrefs.visao) {
+    visaoSelect2.value = savedPrefs.visao;
+  }
+
   // 1. Abastecimentos (Combustível)
   if (selectedOp === 'all' || selectedOp === 'abastecimentos') {
     filterByRelParams(entries, 'data').forEach(e => {
       const fuelObj = fuelTypes.find(f => f.id === e.combustivelId);
       const fuelName = fuelObj ? fuelObj.nome : (e.combustivel || 'Combustível');
       const consumo = computeConsumption(e);
+      const paymentObj = paymentMethods.find(p => p.id === e.pagamentoId);
+      const paymentName = paymentObj ? paymentObj.nome : '';
       itemsToAggregate.push({
         id: e.id,
         tipo: 'Combustível',
@@ -7482,7 +7547,9 @@ function renderRelatorio() {
         valor: e.valor || 0,
         fluxo: 'saida',
         detalhes: `${e.litros ? e.litros.toFixed(2) + 'L' : ''} ${e.odometro ? '· ' + e.odometro.toLocaleString('pt-BR') + ' km' : ''}`.trim(),
-        kmL: consumo
+        kmL: consumo,
+        formaPagamento: paymentName,
+        observacao: e.observacao || ''
       });
     });
   }
@@ -7492,6 +7559,8 @@ function renderRelatorio() {
     filterByRelParams(expenses, 'data').forEach(d => {
       const expenseTypeObj = expenseTypes.find(t => t.id === d.tipoDespesaId);
       const typeName = expenseTypeObj ? expenseTypeObj.nome : 'Outra Despesa';
+      const paymentObj = paymentMethods.find(p => p.id === d.pagamentoId);
+      const paymentName = paymentObj ? paymentObj.nome : '';
       itemsToAggregate.push({
         id: d.id,
         tipo: 'Despesa',
@@ -7499,7 +7568,9 @@ function renderRelatorio() {
         data: d.data,
         valor: d.valor || 0,
         fluxo: 'saida',
-        detalhes: d.observacao || ''
+        detalhes: d.local ? `Local: ${d.local}` : '',
+        formaPagamento: paymentName,
+        observacao: d.observacao || ''
       });
     });
   }
@@ -7509,6 +7580,8 @@ function renderRelatorio() {
     filterByRelParams(services, 'data').forEach(s => {
       const serviceTypeObj = serviceTypes.find(t => t.id === s.tipoServicoId);
       const typeName = serviceTypeObj ? serviceTypeObj.nome : 'Outro Serviço';
+      const paymentObj = paymentMethods.find(p => p.id === s.pagamentoId);
+      const paymentName = paymentObj ? paymentObj.nome : '';
       itemsToAggregate.push({
         id: s.id,
         tipo: 'Serviço',
@@ -7516,7 +7589,9 @@ function renderRelatorio() {
         data: s.data,
         valor: s.valor || 0,
         fluxo: 'saida',
-        detalhes: s.observacao || ''
+        detalhes: s.local ? `Local: ${s.local}` : '',
+        formaPagamento: paymentName,
+        observacao: s.observacao || ''
       });
     });
   }
@@ -7524,6 +7599,8 @@ function renderRelatorio() {
   // 4. Percursos (Reembolsos)
   if (selectedOp === 'all' || selectedOp === 'percursos') {
     filterByRelParams(routes, 'dataInicio').forEach(p => {
+      const paymentObj = paymentMethods.find(pg => pg.id === p.pagamentoId);
+      const paymentName = paymentObj ? paymentObj.nome : '';
       itemsToAggregate.push({
         id: p.id,
         tipo: 'Percurso',
@@ -7531,7 +7608,9 @@ function renderRelatorio() {
         data: p.dataInicio,
         valor: p.valorTotal || 0,
         fluxo: 'entrada',
-        detalhes: `${p.origem || ''} ➔ ${p.destino || ''}`
+        detalhes: `${p.origem || ''} ➔ ${p.destino || ''}`,
+        formaPagamento: paymentName,
+        observacao: p.observacao || ''
       });
     });
   }
@@ -7541,6 +7620,8 @@ function renderRelatorio() {
     filterByRelParams(revenues, 'data').forEach(r => {
       const revenueTypeObj = revenueTypes.find(t => t.id === r.tipoReceitaId);
       const typeName = revenueTypeObj ? revenueTypeObj.nome : 'Outra Receita';
+      const paymentObj = paymentMethods.find(p => p.id === r.pagamentoId);
+      const paymentName = paymentObj ? paymentObj.nome : '';
       itemsToAggregate.push({
         id: r.id,
         tipo: 'Receita',
@@ -7548,13 +7629,18 @@ function renderRelatorio() {
         data: r.data,
         valor: r.valor || 0,
         fluxo: 'entrada',
-        detalhes: r.observacao || ''
+        detalhes: r.local ? `Local: ${r.local}` : '',
+        formaPagamento: paymentName,
+        observacao: r.observacao || ''
       });
     });
   }
 
   // Ordena os itens coletados por data decrescente
   itemsToAggregate.sort((a, b) => b.data.localeCompare(a.data));
+
+  // Armazena itens do relatório atual para exportação
+  window.currentReportItems = itemsToAggregate;
 
   // Balanço resumido
   let totalSaidas = 0;
@@ -7596,33 +7682,83 @@ function renderRelatorio() {
     return;
   }
 
-  // Renderização em lista única simplificada
+  const visaoSel = document.getElementById('relatorioVisaoSelect');
+  const isDetalhada = visaoSel && visaoSel.value === 'detalhada';
+
   let rowsHtml = '';
-  itemsToAggregate.forEach((r, idx) => {
-    const parts = r.data.split('-');
-    const formattedDate = parts.length === 3 ? `${parts[2]}/${parts[1]}/${parts[0].slice(2)}` : r.data;
-    const color = r.fluxo === 'entrada' ? 'var(--green)' : (r.fluxo === 'saida' ? 'var(--red)' : 'var(--blue)');
-    const prefix = r.fluxo === 'entrada' ? '+' : (r.fluxo === 'saida' ? '-' : '');
-    const kmLBadge = r.kmL ? `<span style="font-size:11px; font-weight:700; color:var(--orange); background:rgba(255,149,0,0.1); border-radius:10px; padding:1px 6px; margin-left:4px;">${r.kmL.toFixed(1)} km/l</span>` : '';
-    
+
+  if (isDetalhada) {
+    // Cabeçalho da tabela detalhada
     rowsHtml += `
-      <div class="rel-row" data-id="${r.id}" data-tipo="${r.tipo}" style="display: flex; align-items: center; justify-content: space-between; padding: 10px 0; border-bottom: 0.5px solid var(--line); font-size: 13.5px; cursor: pointer; -webkit-user-select:none; user-select:none;">
-        <div style="display: flex; align-items: center; gap: 12px; flex: 1; min-width: 0;">
+      <div style="display: flex; align-items: center; padding: 10px 12px; border-bottom: 1px solid var(--line); font-size: 11px; font-weight: 700; color: var(--ink-soft); text-transform: uppercase; letter-spacing: 0.03em; gap: 12px; min-width: 680px; background: rgba(0,0,0,0.02);">
+        <span style="width: 72px; flex-shrink: 0;">Data</span>
+        <span style="flex: 1.2; min-width: 130px;">Descrição</span>
+        <span style="flex: 1; min-width: 120px;">Forma Pagto</span>
+        <span style="flex: 1.5; min-width: 140px;">Observações</span>
+        <span style="width: 100px; text-align: right; flex-shrink: 0;">Valor</span>
+      </div>
+    `;
+
+    itemsToAggregate.forEach(r => {
+      const parts = r.data.split('-');
+      const formattedDate = parts.length === 3 ? `${parts[2]}/${parts[1]}/${parts[0].slice(2)}` : r.data;
+      const color = r.fluxo === 'entrada' ? 'var(--green)' : (r.fluxo === 'saida' ? 'var(--red)' : 'var(--blue)');
+      const prefix = r.fluxo === 'entrada' ? '+' : (r.fluxo === 'saida' ? '-' : '');
+      const kmLBadge = r.kmL ? `<span style="font-size:11px; font-weight:700; color:var(--orange); background:rgba(255,149,0,0.1); border-radius:10px; padding:1px 6px; margin-left:4px;">${r.kmL.toFixed(1)} km/l</span>` : '';
+
+      rowsHtml += `
+        <div class="rel-row" data-id="${r.id}" data-tipo="${r.tipo}" style="display: flex; align-items: center; padding: 10px 12px; border-bottom: 0.5px solid var(--line); font-size: 13px; cursor: pointer; gap: 12px; min-width: 680px; -webkit-user-select:none; user-select:none;">
           <span style="color: var(--ink-soft); font-weight: 500; font-variant-numeric: tabular-nums; flex-shrink: 0; width: 72px;">${formattedDate}</span>
-          <div style="display: flex; flex-direction: column; min-width: 0; flex: 1;">
+          
+          <div style="display: flex; flex-direction: column; min-width: 130px; flex: 1.2;">
             <span style="color: var(--ink); font-weight: 600; text-overflow: ellipsis; overflow: hidden; white-space: nowrap;">${escapeHtml(r.categoria)}${kmLBadge}</span>
             ${r.detalhes ? `<span style="color: var(--ink-soft); font-size: 11px; text-overflow: ellipsis; overflow: hidden; white-space: nowrap; margin-top: 1px;">${escapeHtml(r.detalhes)}</span>` : ''}
           </div>
+
+          <div style="min-width: 120px; flex: 1; color: var(--ink); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+            ${escapeHtml(r.formaPagamento || '-')}
+          </div>
+
+          <div style="min-width: 140px; flex: 1.5; color: var(--ink-soft); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+            ${escapeHtml(r.observacao || '-')}
+          </div>
+
+          <strong style="color: ${color}; font-variant-numeric: tabular-nums; width: 100px; text-align: right; flex-shrink: 0; font-size: 13.5px;">${prefix} ${currency.format(r.valor)}</strong>
         </div>
-        <strong style="color: ${color}; font-variant-numeric: tabular-nums; flex-shrink: 0; margin-left: 12px; font-size: 14px;">${prefix} ${currency.format(r.valor)}</strong>
-      </div>
-    `;
-  });
+      `;
+    });
+  } else {
+    // Visão Consolidada
+    itemsToAggregate.forEach(r => {
+      const parts = r.data.split('-');
+      const formattedDate = parts.length === 3 ? `${parts[2]}/${parts[1]}/${parts[0].slice(2)}` : r.data;
+      const color = r.fluxo === 'entrada' ? 'var(--green)' : (r.fluxo === 'saida' ? 'var(--red)' : 'var(--blue)');
+      const prefix = r.fluxo === 'entrada' ? '+' : (r.fluxo === 'saida' ? '-' : '');
+      const kmLBadge = r.kmL ? `<span style="font-size:11px; font-weight:700; color:var(--orange); background:rgba(255,149,0,0.1); border-radius:10px; padding:1px 6px; margin-left:4px;">${r.kmL.toFixed(1)} km/l</span>` : '';
+      
+      rowsHtml += `
+        <div class="rel-row" data-id="${r.id}" data-tipo="${r.tipo}" style="display: flex; align-items: center; justify-content: space-between; padding: 10px 0; border-bottom: 0.5px solid var(--line); font-size: 13.5px; cursor: pointer; -webkit-user-select:none; user-select:none;">
+          <div style="display: flex; align-items: center; gap: 12px; flex: 1; min-width: 0;">
+            <span style="color: var(--ink-soft); font-weight: 500; font-variant-numeric: tabular-nums; flex-shrink: 0; width: 72px;">${formattedDate}</span>
+            <div style="display: flex; flex-direction: column; min-width: 0; flex: 1;">
+              <span style="color: var(--ink); font-weight: 600; text-overflow: ellipsis; overflow: hidden; white-space: nowrap;">${escapeHtml(r.categoria)}${kmLBadge}</span>
+              ${r.detalhes ? `<span style="color: var(--ink-soft); font-size: 11px; text-overflow: ellipsis; overflow: hidden; white-space: nowrap; margin-top: 1px;">${escapeHtml(r.detalhes)}</span>` : ''}
+            </div>
+          </div>
+          <strong style="color: ${color}; font-variant-numeric: tabular-nums; flex-shrink: 0; margin-left: 12px; font-size: 14px;">${prefix} ${currency.format(r.valor)}</strong>
+        </div>
+      `;
+    });
+  }
 
   container.innerHTML = `
-    <div style="background: var(--card); border-radius: 14px; border: 1px solid var(--line); padding: 4px 14px; box-shadow: 0 1px 2px rgba(0,0,0,0.01);">
+    <div style="background: var(--card); border-radius: 14px; border: 1px solid var(--line); padding: 4px 14px; box-shadow: 0 1px 2px rgba(0,0,0,0.01); ${isDetalhada ? 'overflow-x: auto; -webkit-overflow-scrolling: touch;' : ''}">
       ${rowsHtml}
     </div>
+    <button id="btnExportRelatorioExcel" onclick="exportRelatorioExcel()" style="width: 100%; margin-top: 14px; padding: 12px 16px; border-radius: 12px; border: 1px solid var(--line); background: var(--card); color: var(--blue); font-size: 14px; font-weight: 700; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.03);">
+      <i data-lucide="file-spreadsheet" style="width: 18px; height: 18px; color: var(--blue);"></i>
+      Exportar Relatório (.xls)
+    </button>
   `;
 
   // Bind click listener for each row
@@ -7638,6 +7774,8 @@ function renderRelatorio() {
       else if (tipo === 'Receita') openSheetReceita(id);
     });
   });
+
+  if (typeof renderIcons === 'function') renderIcons();
 }
 
 /* ============================================================
